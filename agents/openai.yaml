@@ -1,0 +1,4 @@
+interface:
+  display_name: "A股短线复盘日报"
+  short_description: "每日A股短线复盘并生成HTML报告：情绪、连板、板块、资金、亏钱效应与风向标"
+  default_prompt: "Use $a-stock-daily-review to 复盘今天的A股短线行情并生成HTML报告。"
