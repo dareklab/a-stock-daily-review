@@ -557,7 +557,7 @@ def select_wind_vane(m):
     seen, out = set(), []
 
     def add(code, name, role, point):
-        if code and code not in seen and len(out) < 8:
+        if code and code not in seen and len(out) < 10:
             seen.add(code)
             out.append({"code": code, "name": name, "role": role, "point": point})
 
@@ -581,26 +581,20 @@ def select_wind_vane(m):
                 add(z["code"], z["name"], f"{main_ind}代表涨停", "主线扩散观察")
 
     if m["amount_top"]:
-        a = m["amount_top"][0]
-        add(a["code"], a["name"], "成交额龙头", "大盘资金风向")
+        a = next((x for x in m["amount_top"] if x["pct"] > 0), None)
+        if a:
+            add(a["code"], a["name"], "成交额龙头", "大盘资金风向")
 
     if m["lhb_top"]:
-        b = m["lhb_top"][0]
-        add(b["code"], b["name"], "龙虎榜净买最大", f"净买{b['net_buy_wan']/1e4:.1f}亿")
+        b = next((x for x in m["lhb_top"] if x["net_buy_wan"] > 0), None)
+        if b:
+            add(b["code"], b["name"], "龙虎榜净买最大", f"净买{b['net_buy_wan']/1e4:.1f}亿")
 
     if m["inst_stocks"]:
         ib = next((x for x in m["inst_stocks"] if x["inst_net_wan"] > 0), None)
         if ib:
             add(ib["code"], ib["name"], "机构净买方向",
                 f"机构席位净买{ib['inst_net_wan']/1e4:.1f}亿")
-        ise = next((x for x in reversed(m["inst_stocks"]) if x["inst_net_wan"] < 0), None)
-        if ise:
-            add(ise["code"], ise["name"], "高位派发负向",
-                f"机构席位净卖{abs(ise['inst_net_wan'])/1e4:.1f}亿")
-
-    if m["zb_top"]:
-        z = max(m["zb_top"], key=lambda s: s["break_times"])
-        add(z["code"], z["name"], "炸板极端分歧", f"炸板{z['break_times']}次")
 
     if m["yzt"]["best"]:
         best = m["yzt"]["best"][0]
@@ -608,13 +602,26 @@ def select_wind_vane(m):
         if z:
             add(z["code"], z["name"], "晋级标杆", f"昨涨停今日{best[1]:+.2f}%")
 
-    if len(out) < 5 and m["lhb_top"]:
+    # 只保留强方向：净买榜、机构净买、上涨的成交额前排
+    if m["lhb_top"]:
         for b in m["lhb_top"]:
-            add(b["code"], b["name"], "龙虎榜资金", f"净买{b['net_buy_wan']/1e4:.1f}亿")
-    if len(out) < 5 and m["amount_top"]:
+            if b["net_buy_wan"] > 0:
+                add(b["code"], b["name"], "龙虎榜净买",
+                    f"净买{b['net_buy_wan']/1e4:.1f}亿")
+    if m["inst_stocks"]:
+        for x in m["inst_stocks"]:
+            if x["inst_net_wan"] > 0:
+                add(x["code"], x["name"], "机构净买",
+                    f"机构席位净买{x['inst_net_wan']/1e4:.1f}亿")
+    if m["amount_top"]:
         for a in m["amount_top"][1:]:
-            add(a["code"], a["name"], "成交额前排", f"成交{a['amount']:.0f}亿")
-    return out[:8]
+            if a["pct"] > 0:
+                add(a["code"], a["name"], "成交额前排", f"成交{a['amount']:.0f}亿")
+    for name, pct, _zt_stat in m["yzt"].get("best", []):
+        z = next((s for s in m["zt"] if s["name"] == name), None)
+        if z:
+            add(z["code"], z["name"], "晋级标杆", f"昨涨停今日{pct:+.2f}%")
+    return out[:10]
 
 
 CSS = """
