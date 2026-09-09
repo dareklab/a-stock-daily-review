@@ -557,7 +557,7 @@ def select_wind_vane(m):
     seen, out = set(), []
 
     def add(code, name, role, point):
-        if code and code not in seen and len(out) < 8:
+        if code and code not in seen and len(out) < 10:
             seen.add(code)
             out.append({"code": code, "name": name, "role": role, "point": point})
 
@@ -581,26 +581,20 @@ def select_wind_vane(m):
                 add(z["code"], z["name"], f"{main_ind}代表涨停", "主线扩散观察")
 
     if m["amount_top"]:
-        a = m["amount_top"][0]
-        add(a["code"], a["name"], "成交额龙头", "大盘资金风向")
+        a = next((x for x in m["amount_top"] if x["pct"] > 0), None)
+        if a:
+            add(a["code"], a["name"], "成交额龙头", "大盘资金风向")
 
     if m["lhb_top"]:
-        b = m["lhb_top"][0]
-        add(b["code"], b["name"], "龙虎榜净买最大", f"净买{b['net_buy_wan']/1e4:.1f}亿")
+        b = next((x for x in m["lhb_top"] if x["net_buy_wan"] > 0), None)
+        if b:
+            add(b["code"], b["name"], "龙虎榜净买最大", f"净买{b['net_buy_wan']/1e4:.1f}亿")
 
     if m["inst_stocks"]:
         ib = next((x for x in m["inst_stocks"] if x["inst_net_wan"] > 0), None)
         if ib:
             add(ib["code"], ib["name"], "机构净买方向",
                 f"机构席位净买{ib['inst_net_wan']/1e4:.1f}亿")
-        ise = next((x for x in reversed(m["inst_stocks"]) if x["inst_net_wan"] < 0), None)
-        if ise:
-            add(ise["code"], ise["name"], "高位派发负向",
-                f"机构席位净卖{abs(ise['inst_net_wan'])/1e4:.1f}亿")
-
-    if m["zb_top"]:
-        z = max(m["zb_top"], key=lambda s: s["break_times"])
-        add(z["code"], z["name"], "炸板极端分歧", f"炸板{z['break_times']}次")
 
     if m["yzt"]["best"]:
         best = m["yzt"]["best"][0]
@@ -608,13 +602,26 @@ def select_wind_vane(m):
         if z:
             add(z["code"], z["name"], "晋级标杆", f"昨涨停今日{best[1]:+.2f}%")
 
-    if len(out) < 5 and m["lhb_top"]:
+    # 只保留强方向：净买榜、机构净买、上涨的成交额前排
+    if m["lhb_top"]:
         for b in m["lhb_top"]:
-            add(b["code"], b["name"], "龙虎榜资金", f"净买{b['net_buy_wan']/1e4:.1f}亿")
-    if len(out) < 5 and m["amount_top"]:
+            if b["net_buy_wan"] > 0:
+                add(b["code"], b["name"], "龙虎榜净买",
+                    f"净买{b['net_buy_wan']/1e4:.1f}亿")
+    if m["inst_stocks"]:
+        for x in m["inst_stocks"]:
+            if x["inst_net_wan"] > 0:
+                add(x["code"], x["name"], "机构净买",
+                    f"机构席位净买{x['inst_net_wan']/1e4:.1f}亿")
+    if m["amount_top"]:
         for a in m["amount_top"][1:]:
-            add(a["code"], a["name"], "成交额前排", f"成交{a['amount']:.0f}亿")
-    return out[:8]
+            if a["pct"] > 0:
+                add(a["code"], a["name"], "成交额前排", f"成交{a['amount']:.0f}亿")
+    for name, pct, _zt_stat in m["yzt"].get("best", []):
+        z = next((s for s in m["zt"] if s["name"] == name), None)
+        if z:
+            add(z["code"], z["name"], "晋级标杆", f"昨涨停今日{pct:+.2f}%")
+    return out[:10]
 
 
 CSS = """
@@ -663,6 +670,7 @@ td.num,th.num{text-align:right}td.center,th.center{text-align:center}
 .two-col{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;align-items:start}
 .subhead{font-size:13px;font-weight:700;margin:16px 0 8px}.subhead:first-child{margin-top:0}
 .wind-table td:first-child{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;white-space:nowrap}
+.strong-seal{color:#a52a20;font-weight:700;background:var(--red-bg);padding:1px 6px;border-radius:4px;display:inline-block;white-space:nowrap}
 footer{padding:24px 0 40px}footer .note{font-size:12px;color:var(--muted)}footer .note+.note{margin-top:6px}
 @media(max-width:900px){.hero-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}.index-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tables-2,.two-col{grid-template-columns:1fr}.ladder-row{grid-template-columns:56px 1fr}.ladder-names{grid-column:1/-1;text-align:left;white-space:normal}.sec-note{display:none}}
 @media(max-width:560px){.hero h1{font-size:21px}.hero-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.wrap{padding:0 14px}td,th{padding:7px 8px}}
@@ -784,7 +792,41 @@ def build_html(m, indexes, wind):
     ladder_html += (f'<div class="ladder-row"><div class="ladder-level">1板'
                     f'<small>{first_count} 只</small></div>'
                     f'<div class="bar-track"><div class="bar-fill" style="width:{width1:.0f}%"></div></div>'
-                    f'<div class="ladder-names">低位首板为主</div></div>')
+                    f'<div class="ladder-names">低位首板为主（{first_count}只 · 明细见下）</div></div>')
+
+    detail_rows = ""
+    strong_ratio = []
+    boards_all = sorted(m["ladder"], reverse=True)
+    for days in boards_all:
+        members = [s for s in m["zt"] if s["limit_days"] == days]
+        top = days == m.get("max_board")
+        for s in sorted(members, key=lambda x: x["first_seal"]):
+            amt = s.get("amount") or 0
+            seal = s.get("seal_fund") or 0
+            ratio = round(seal / amt * 100, 2) if amt else None
+            if ratio is not None and ratio > 100:
+                strong_ratio.append(s["name"])
+            val = "-" if ratio is None else (str(ratio) if ratio == int(ratio) else f"{ratio:.2f}")
+            cell = f'<td class="num">{val}</td>'
+            if ratio is not None and ratio > 100:
+                cell = f'<td class="num"><span class="strong-seal">{val}</span></td>'
+            detail_rows += (f'<tr><td>{"<b>" if top else ""}{days}板{"</b>" if top else ""}</td>'
+                            f'<td class="num">{s["code"]}</td><td>{esc(s["name"])}</td>'
+                            f'<td>{esc(s.get("industry") or "-")}</td>'
+                            f'<td class="center">{esc(s.get("zt_stat") or "-")}</td>'
+                            f'{cell}<td class="num">{s.get("first_seal") or "-"}</td></tr>')
+    ladder_detail_html = (
+        '<div class="subhead">连板梯队个股明细</div>'
+        '<div class="table-scroll"><table><thead><tr><th>板数</th><th>代码</th>'
+        '<th>名称</th><th>行业</th><th class="center">连板统计</th>'
+        '<th class="num">封单成交比(%)</th><th class="num">首封时间</th></tr></thead>'
+        f'<tbody>{detail_rows}</tbody></table></div>'
+        '<div class="note">封单成交比 = 交易结束前买一挂单总金额 / 当日成交总金额 × 100%；'
+        '值越高封单相对成交越强、越难开板，值越低封单防守越弱、开板风险越大。</div>'
+    )
+    if strong_ratio:
+        ladder_detail_html += (f'<div class="note"><b>红色高亮</b>表示封单成交比 &gt;100%，'
+                               f'封单强度高、较难开板（如 {esc("、".join(strong_ratio))}）。</div>')
 
     top_board = max(m["zt"], key=lambda s: s["limit_days"]) if m["zt"] else None
     top_board_name = top_board["name"] if top_board else ""
@@ -953,7 +995,7 @@ def build_html(m, indexes, wind):
 <div class="callout"><b>结论：</b>{senti_concl}</div></section>
 <section id="ladder"><div class="sec-head"><span class="sec-num">02</span>
 <span class="sec-title">连板梯队</span><span class="sec-note">{ladder_note}</span></div>
-<div class="ladder">{ladder_html}</div>{gap_html}</section>
+<div class="ladder">{ladder_html}</div>{ladder_detail_html}{gap_html}</section>
 <section id="sectors"><div class="sec-head"><span class="sec-num">03</span>
 <span class="sec-title">板块结构</span><span class="sec-note">3只以上涨停为强势板块</span></div>
 {sector_table}
