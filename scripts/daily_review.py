@@ -671,6 +671,7 @@ td.num,th.num{text-align:right}td.center,th.center{text-align:center}
 .subhead{font-size:13px;font-weight:700;margin:16px 0 8px}.subhead:first-child{margin-top:0}
 .wind-table td:first-child{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;white-space:nowrap}
 .strong-seal{color:#a52a20;font-weight:700;background:var(--red-bg);padding:1px 6px;border-radius:4px;display:inline-block;white-space:nowrap}
+.early-seal td{background:var(--teal-bg)}.early-seal td:last-child{color:var(--teal);font-weight:700}
 footer{padding:24px 0 40px}footer .note{font-size:12px;color:var(--muted)}footer .note+.note{margin-top:6px}
 @media(max-width:900px){.hero-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}.index-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tables-2,.two-col{grid-template-columns:1fr}.ladder-row{grid-template-columns:56px 1fr}.ladder-names{grid-column:1/-1;text-align:left;white-space:normal}.sec-note{display:none}}
 @media(max-width:560px){.hero h1{font-size:21px}.hero-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.wrap{padding:0 14px}td,th{padding:7px 8px}}
@@ -810,16 +811,21 @@ def build_html(m, indexes, wind):
             cell = f'<td class="num">{val}</td>'
             if ratio is not None and ratio > 100:
                 cell = f'<td class="num"><span class="strong-seal">{val}</span></td>'
-            detail_rows += (f'<tr><td>{"<b>" if top else ""}{days}板{"</b>" if top else ""}</td>'
+            turnover = "-" if s.get("turnover") is None else f'{s["turnover"]:.2f}%'
+            last_seal = s.get("last_seal") or "-"
+            row_class = ' class="early-seal"' if last_seal < "09:45:00" else ""
+            detail_rows += (f'<tr{row_class}><td>{"<b>" if top else ""}{days}板{"</b>" if top else ""}</td>'
                             f'<td class="num">{s["code"]}</td><td>{esc(s["name"])}</td>'
                             f'<td>{esc(s.get("industry") or "-")}</td>'
                             f'<td class="center">{esc(s.get("zt_stat") or "-")}</td>'
-                            f'{cell}<td class="num">{s.get("first_seal") or "-"}</td></tr>')
+                            f'<td class="num">{turnover}</td>{cell}'
+                            f'<td class="num">{last_seal}</td></tr>')
     ladder_detail_html = (
         '<div class="subhead">连板梯队个股明细</div>'
         '<div class="table-scroll"><table><thead><tr><th>板数</th><th>代码</th>'
         '<th>名称</th><th>行业</th><th class="center">连板统计</th>'
-        '<th class="num">封单成交比(%)</th><th class="num">首封时间</th></tr></thead>'
+        '<th class="num">换手率</th><th class="num">封单成交比(%)</th>'
+        '<th class="num">最后封板时间</th></tr></thead>'
         f'<tbody>{detail_rows}</tbody></table></div>'
         '<div class="note">封单成交比 = 交易结束前买一挂单总金额 / 当日成交总金额 × 100%；'
         '值越高封单相对成交越强、越难开板，值越低封单防守越弱、开板风险越大。</div>'
