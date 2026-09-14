@@ -553,75 +553,57 @@ def fetch_drop_rows(date_str):
     return rows
 
 
-def select_wind_vane(m):
-    seen, out = set(), []
-
-    def add(code, name, role, point):
-        if code and code not in seen and len(out) < 10:
-            seen.add(code)
-            out.append({"code": code, "name": name, "role": role, "point": point})
-
-    zt = sorted(m["zt"], key=lambda s: s["limit_days"], reverse=True)
-    if zt:
-        top = zt[0]
-        add(top["code"], top["name"], f"{top['limit_days']}连板总龙头",
-            "断板即情绪转弱信号")
-
-    # 主线连板龙头：今日涨停数最多的行业里连板最高的个股
-    if m["strong_sectors"]:
-        main_ind = m["strong_sectors"][0]["name"]
-        cands = [s for s in m["zt"] if s["industry"] == main_ind and s["limit_days"] >= 2]
-        if cands:
-            c = max(cands, key=lambda s: s["limit_days"])
-            add(c["code"], c["name"], f"{main_ind}连板龙头", "主线高度")
+def strong_sector_directions(m):
+    today = {s["name"]: s["count"] for s in m["strong_sectors"]}
+    yesterday = dict(m["yesterday_sectors"])
+    directions = {}
+    for name, count in today.items():
+        if yesterday.get(name, 0) >= 3:
+            directions[name] = ("延续扩散", yesterday[name], count)
         else:
-            c = m["strong_sectors"][0]["members"][0]
-            z = next((s for s in m["zt"] if s["name"] == c), None)
-            if z:
-                add(z["code"], z["name"], f"{main_ind}代表涨停", "主线扩散观察")
+            directions[name] = ("新爆发", yesterday.get(name, 0), count)
+    return directions
 
-    if m["amount_top"]:
-        a = next((x for x in m["amount_top"] if x["pct"] > 0), None)
-        if a:
-            add(a["code"], a["name"], "成交额龙头", "大盘资金风向")
 
-    if m["lhb_top"]:
-        b = next((x for x in m["lhb_top"] if x["net_buy_wan"] > 0), None)
-        if b:
-            add(b["code"], b["name"], "龙虎榜净买最大", f"净买{b['net_buy_wan']/1e4:.1f}亿")
+def select_wind_vane(m):
+    directions = strong_sector_directions(m)
+    candidates = []
 
-    if m["inst_stocks"]:
-        ib = next((x for x in m["inst_stocks"] if x["inst_net_wan"] > 0), None)
-        if ib:
-            add(ib["code"], ib["name"], "机构净买方向",
-                f"机构席位净买{ib['inst_net_wan']/1e4:.1f}亿")
+    def position_advice(status, ratio):
+        if status == "-":
+            return ("先观察不追：明日板块确认扩散且开盘30分钟内回封后，"
+                    "再考虑1成内试错。")
+        if ratio >= 500:
+            return ("轻仓排板：竞价高开过猛先等回封，确认板块延续后仓位不超过1成，"
+                    "破板撤单。")
+        return ("轻仓试错：高开0-4%且板块延续时考虑1-2成，"
+                "跌破分时均价或炸板退出。")
 
-    if m["yzt"]["best"]:
-        best = m["yzt"]["best"][0]
-        z = next((s for s in m["zt"] if s["name"] == best[0]), None)
-        if z:
-            add(z["code"], z["name"], "晋级标杆", f"昨涨停今日{best[1]:+.2f}%")
-
-    # 只保留强方向：净买榜、机构净买、上涨的成交额前排
-    if m["lhb_top"]:
-        for b in m["lhb_top"]:
-            if b["net_buy_wan"] > 0:
-                add(b["code"], b["name"], "龙虎榜净买",
-                    f"净买{b['net_buy_wan']/1e4:.1f}亿")
-    if m["inst_stocks"]:
-        for x in m["inst_stocks"]:
-            if x["inst_net_wan"] > 0:
-                add(x["code"], x["name"], "机构净买",
-                    f"机构席位净买{x['inst_net_wan']/1e4:.1f}亿")
-    if m["amount_top"]:
-        for a in m["amount_top"][1:]:
-            if a["pct"] > 0:
-                add(a["code"], a["name"], "成交额前排", f"成交{a['amount']:.0f}亿")
-    for name, pct, _zt_stat in m["yzt"].get("best", []):
-        z = next((s for s in m["zt"] if s["name"] == name), None)
-        if z:
-            add(z["code"], z["name"], "晋级标杆", f"昨涨停今日{pct:+.2f}%")
-    return out[:10]
+    for s in m["zt"]:
+        amount = s.get("amount") or 0
+        if not amount:
+            continue
+        ratio = (s.get("seal_fund") or 0) / amount * 100
+        if ratio <= 300 or s.get("turnover", 100) >= 3:
+            continue
+        if s.get("first_seal", "99:99:99") >= "09:35:00":
+            continue
+        direction = directions.get(s.get("industry") or "")
+        status = direction[0] if direction else "-"
+        sector_change = (f'（{direction[1]}→{direction[2]}）' if direction else "")
+        candidates.append({
+            "code": s["code"],
+            "name": s["name"],
+            "industry": s["industry"],
+            "status": status,
+            "point": (f'封单比{ratio:.0f}% · 换手{s["turnover"]:.2f}% · '
+                      f'首封{s["first_seal"]}{sector_change}'),
+            "advice": position_advice(status, ratio),
+            "first_seal": s["first_seal"],
+            "ratio": ratio,
+        })
+    candidates.sort(key=lambda s: (s["first_seal"], -s["ratio"]))
+    return candidates[:10]
 
 
 CSS = """
@@ -867,16 +849,14 @@ def build_html(m, indexes, wind):
                     '<th class="center">涨停数</th><th>涨停成员</th></tr></thead>'
                     f'<tbody>{sector_rows}</tbody></table></div>')
 
-    y_inds = {name for name, _ in m["yesterday_sectors"] if name}
-    t_inds = {s["name"] for s in m["strong_sectors"]}
-    y_cnt = dict(m["yesterday_sectors"])
-    t_cnt = {s["name"]: s["count"] for s in m["strong_sectors"]}
-    extend = sorted(((n, y_cnt.get(n, 0), t_cnt[n]) for n in t_inds
-                     if n in y_cnt and y_cnt.get(n, 0) >= 3), key=lambda x: -x[2])
-    fresh = sorted(((n, y_cnt.get(n, 0), t_cnt[n]) for n in t_inds
-                    if y_cnt.get(n, 0) < 3), key=lambda x: -x[2])
-    fade = sorted(((n, y_cnt[n], t_cnt.get(n, 0)) for n in y_inds
-                   if y_cnt[n] >= 3 and t_cnt.get(n, 0) < 3), key=lambda x: -x[1])
+    sector_directions = strong_sector_directions(m)
+    extend = sorted(((n, y, t) for n, (status, y, t) in sector_directions.items()
+                     if status == "延续扩散"), key=lambda x: -x[2])
+    fresh = sorted(((n, y, t) for n, (status, y, t) in sector_directions.items()
+                    if status == "新爆发"), key=lambda x: -x[2])
+    yesterday_counts = dict(m["yesterday_sectors"])
+    fade = sorted(((n, y, 0) for n, y in yesterday_counts.items()
+                   if y >= 3 and n not in sector_directions), key=lambda x: -x[1])
     chips = ""
     if extend:
         chips += '<span class="chip teal">延续扩散：' + \
@@ -958,9 +938,15 @@ def build_html(m, indexes, wind):
     wind_rows = ""
     for w in wind:
         wind_rows += (f'<tr><td>{esc(w["code"])}</td><td>{esc(w["name"])}</td>'
-                      f'<td>{esc(w["role"])}</td><td>{esc(w["point"])}</td></tr>')
+                      f'<td>{esc(w["industry"])}</td><td>{esc(w["status"])}</td>'
+                      f'<td>{esc(w["point"])}</td><td>{esc(w["advice"])}</td></tr>')
+    if not wind_rows:
+        wind_rows = ('<tr><td colspan="6" class="note">'
+                     '暂无同时满足：封单成交比&gt;300%、换手率&lt;3%、'
+                     '首次封板早于09:35的个股</td></tr>')
     wind_table = ('<div class="table-scroll"><table class="wind-table"><thead>'
-                  '<tr><th>代码</th><th>名称</th><th>身份</th><th>观察点</th></tr></thead>'
+                  '<tr><th>代码</th><th>名称</th><th>所属板块</th><th>板块状态</th>'
+                  '<th>筛选指标</th><th>建仓建议</th></tr></thead>'
                   f'<tbody>{wind_rows}</tbody></table></div>')
 
     yzt_c = m["yzt"]
