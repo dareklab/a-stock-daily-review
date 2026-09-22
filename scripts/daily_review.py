@@ -558,8 +558,9 @@ def strong_sector_directions(m):
     yesterday = dict(m["yesterday_sectors"])
     directions = {}
     for name, count in today.items():
-        if yesterday.get(name, 0) >= 3:
-            directions[name] = ("延续扩散", yesterday[name], count)
+        prev = yesterday.get(name, 0)
+        if prev >= 3:
+            directions[name] = ("延续扩散" if count >= prev else "退潮", prev, count)
         else:
             directions[name] = ("新爆发", yesterday.get(name, 0), count)
     return directions
@@ -596,11 +597,11 @@ def select_wind_vane(m):
             "name": s["name"],
             "industry": s["industry"],
             "status": status,
-            "point": (f'封单比{ratio:.0f}% · 换手{s["turnover"]:.2f}% · '
-                      f'首封{s["first_seal"]}{sector_change}'),
+            "sector_change": sector_change or "-",
             "advice": position_advice(status, ratio),
             "first_seal": s["first_seal"],
             "ratio": ratio,
+            "turnover": s["turnover"],
         })
     candidates.sort(key=lambda s: (s["first_seal"], -s["ratio"]))
     return candidates[:10]
@@ -651,7 +652,17 @@ td.num,th.num{text-align:right}td.center,th.center{text-align:center}
 .tag-row{display:flex;flex-wrap:wrap;gap:6px}.tag{font-size:11px;background:#eeede7;color:#555a61;padding:3px 9px;border-radius:5px}
 .two-col{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;align-items:start}
 .subhead{font-size:13px;font-weight:700;margin:16px 0 8px}.subhead:first-child{margin-top:0}
-.wind-table td:first-child{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;white-space:nowrap}
+.wind-table{width:max-content;min-width:100%}
+.wind-table td{white-space:nowrap}
+.wind-table td:first-child{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px}
+.wind-table td:nth-child(6),.wind-table td:nth-child(7),.wind-table td:nth-child(8){font-variant-numeric:tabular-nums}
+.wind-table td:last-child{font-size:12px;color:#3f444b}
+.wind-table tbody tr:nth-child(even){background:#faf9f5}
+.wind-status{display:inline-flex;align-items:center;justify-content:center;min-width:64px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:600}
+.wind-status.extend{background:var(--teal-bg);color:var(--teal)}
+.wind-status.fresh{background:var(--red-bg);color:#a52a20}
+.wind-status.fade{background:var(--green-bg);color:#0a6b47}
+.wind-status.none{background:#eeede7;color:#555a61}
 .strong-seal{color:#a52a20;font-weight:700;background:var(--red-bg);padding:1px 6px;border-radius:4px;display:inline-block;white-space:nowrap}
 .early-seal td{background:var(--teal-bg)}.early-seal td:last-child{color:var(--teal);font-weight:700}
 footer{padding:24px 0 40px}footer .note{font-size:12px;color:var(--muted)}footer .note+.note{margin-top:6px}
@@ -853,10 +864,12 @@ def build_html(m, indexes, wind):
     extend = sorted(((n, y, t) for n, (status, y, t) in sector_directions.items()
                      if status == "延续扩散"), key=lambda x: -x[2])
     fresh = sorted(((n, y, t) for n, (status, y, t) in sector_directions.items()
-                    if status == "新爆发"), key=lambda x: -x[2])
+                     if status == "新爆发"), key=lambda x: -x[2])
     yesterday_counts = dict(m["yesterday_sectors"])
-    fade = sorted(((n, y, 0) for n, y in yesterday_counts.items()
-                   if y >= 3 and n not in sector_directions), key=lambda x: -x[1])
+    fade = sorted([(n, y, 0) for n, y in yesterday_counts.items()
+                   if y >= 3 and n not in sector_directions] +
+                  [(n, y, t) for n, (status, y, t) in sector_directions.items()
+                   if status == "退潮"], key=lambda x: (-x[1], -x[2]))
     chips = ""
     if extend:
         chips += '<span class="chip teal">延续扩散：' + \
@@ -937,16 +950,27 @@ def build_html(m, indexes, wind):
 
     wind_rows = ""
     for w in wind:
-        wind_rows += (f'<tr><td>{esc(w["code"])}</td><td>{esc(w["name"])}</td>'
-                      f'<td>{esc(w["industry"])}</td><td>{esc(w["status"])}</td>'
-                      f'<td>{esc(w["point"])}</td><td>{esc(w["advice"])}</td></tr>')
+        status_cls = {"延续扩散": "extend", "新爆发": "fresh",
+                      "退潮": "fade"}.get(w["status"], "none")
+        wind_rows += (
+            f'<tr><td>{esc(w["code"])}</td><td>{esc(w["name"])}</td>'
+            f'<td>{esc(w["industry"])}</td>'
+            f'<td><span class="wind-status {status_cls}">{esc(w["status"])}</span></td>'
+            f'<td class="center">{esc(w["sector_change"])}</td>'
+            f'<td class="num"><span class="strong-seal">{w["ratio"]:.0f}%</span></td>'
+            f'<td class="num">{w["turnover"]:.2f}%</td>'
+            f'<td class="num">{esc(w["first_seal"])}</td>'
+            f'<td>{esc(w["advice"])}</td></tr>'
+        )
     if not wind_rows:
-        wind_rows = ('<tr><td colspan="6" class="note">'
+        wind_rows = ('<tr><td colspan="9" class="note">'
                      '暂无同时满足：封单成交比&gt;300%、换手率&lt;3%、'
                      '首次封板早于09:35的个股</td></tr>')
     wind_table = ('<div class="table-scroll"><table class="wind-table"><thead>'
                   '<tr><th>代码</th><th>名称</th><th>所属板块</th><th>板块状态</th>'
-                  '<th>筛选指标</th><th>建仓建议</th></tr></thead>'
+                  '<th class="center">板块变化</th><th class="num">封单比</th>'
+                  '<th class="num">换手率</th><th class="num">首封时间</th>'
+                  '<th>建仓建议</th></tr></thead>'
                   f'<tbody>{wind_rows}</tbody></table></div>')
 
     yzt_c = m["yzt"]
